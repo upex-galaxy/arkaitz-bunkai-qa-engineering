@@ -306,6 +306,8 @@ type ContentMode = 'split' | 'single' | 'description' | 'auto';
 interface WorkTypeEntry {
   slug: string
   jiraIssueType: string
+  /** Extra localized names of the same work type (`A | B` in jira_issue_type: first is canonical). */
+  aliases: string[]
   sync: SyncMode
   recommended: boolean
   coverable: boolean
@@ -448,7 +450,10 @@ function loadRegistry(): Registry {
       for (const [slug, raw] of Object.entries(workTypes as Record<string, unknown>)) {
         if (!raw || typeof raw !== 'object') { continue; }
         const e = raw as Record<string, unknown>;
-        const jiraIssueType = typeof e.jira_issue_type === 'string' ? e.jira_issue_type.trim() : '';
+        const typeNames = typeof e.jira_issue_type === 'string'
+          ? e.jira_issue_type.split('|').map(n => n.trim()).filter(Boolean)
+          : [];
+        const [jiraIssueType = '', ...aliases] = typeNames;
         if (!jiraIssueType) { continue; }
 
         const role: 'atp' | 'atr' | null = e.role === 'atp' ? 'atp' : e.role === 'atr' ? 'atr' : null;
@@ -462,6 +467,7 @@ function loadRegistry(): Registry {
         list.push({
           slug,
           jiraIssueType,
+          aliases,
           sync,
           recommended: e.recommended === true,
           coverable: e.coverable === true,
@@ -479,6 +485,7 @@ function loadRegistry(): Registry {
   const bySlug = new Map<string, WorkTypeEntry>();
   for (const e of list) {
     byJiraType.set(e.jiraIssueType, e);
+    for (const alias of e.aliases) { byJiraType.set(alias, e); }
     bySlug.set(e.slug, e);
   }
   REGISTRY_CACHE = { list, byJiraType, bySlug };
@@ -3913,7 +3920,9 @@ async function routeIssueByKey(
   result: SyncResult,
 ): Promise<void> {
   const probe = await fetchIssue(config, key, ['issuetype', 'summary']);
-  const type = probe.fields.issuetype?.name ?? 'Unknown';
+  const rawType = probe.fields.issuetype?.name ?? 'Unknown';
+  // A localized name ("Historia") resolves to the canonical type declared in jira_issue_type.
+  const type = loadRegistry().byJiraType.get(rawType)?.jiraIssueType ?? rawType;
 
   if (type === 'Epic') {
     await syncEpic(config, key, options, result);
